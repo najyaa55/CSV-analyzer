@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CSV Analyzer</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        h2, h3 { margin-top: 10px; margin-bottom: 10px; }
+        input, select, button { padding: 5px; margin: 5px 0; font-size: 14px; }
+        button { cursor: pointer; }
+        table { border-collapse: collapse; margin-top: 20px; width: 100%; }
+        th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+        #container { display: flex; gap: 20px; }
+        #tableContainer { flex: 1; overflow-x: auto; }
+        #rightPanel { width: 250px; border: 1px solid #ccc; padding: 10px; border-radius: 8px; background: #f9f9f9; }
+        #statsResult { margin-top: 10px; font-weight: bold; white-space: pre-line; }
+        canvas { margin-top: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        
+/* General Page Styling */
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background-color: #f5f5f5;
+    color: #333;
+}
+
+h2, h3 {
+    margin: 10px 0;
+}
+
+/* Inputs and Buttons */
+input[type="file"], select, button {
+    padding: 8px;
+    margin: 5px 0;
+    font-size: 14px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+}
+
+button {
+    cursor: pointer;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    transition: background-color 0.2s ease;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+/* Container for Table + Right Panel */
+#container {
+    display: flex;
+    gap: 20px;
+}
+
+/* Table Styling */
+#tableContainer {
+    flex: 1;
+    overflow-x: auto;
+    background-color: #fff;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
+
+/* Right Panel Styling */
+#rightPanel {
+    width: 260px;
+    padding: 15px;
+    border-radius: 8px;
+    background-color: #fff;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+/* Stats Output */
+#statsResult {
+    margin-top: 10px;
+    font-weight: bold;
+    white-space: pre-line;
+}
+
+/* Histogram Canvas */
+canvas {
+    margin-top: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #fafafa;
+}
+</style>
+    
+</head>
+<body>
+
+<h2>CSV Analyzer</h2>
+
+<input type="file" id="csvFile">
+<button onclick="uploadFile()">Upload</button>
+
+<div id="container">
+    <div id="tableContainer"></div>
+
+    <div id="rightPanel">
+        <h3>Select Column</h3>
+        <select id="columnSelector"></select>
+        <button onclick="fetchStatsAndHist()">Calculate</button>
+
+        <h3>Statistics</h3>
+        <div id="statsResult"></div>
+
+        <h3>Histogram</h3>
+        <canvas id="histogram" width="250" height="200"></canvas>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let dataset = [];
+let chartInstance = null;
+
+// Upload CSV
+async function uploadFile() {
+    const fileInput = document.getElementById("csvFile");
+    const file = fileInput.files[0];
+    if (!file) { alert("Select a CSV file"); return; }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    await fetch("http://localhost:5000/api/upload", { method: "POST", body: formData });
+    loadTable();
+}
+
+// Load table
+async function loadTable() {
+    const response = await fetch("http://localhost:5000/api/dataset/1/table");
+    dataset = await response.json();
+
+    if (!dataset.length) { document.getElementById("tableContainer").innerHTML = "No data"; return; }
+
+    let table = "<table><tr>";
+    for (let key in dataset[0]) table += `<th>${key}</th>`;
+    table += "</tr>";
+
+    dataset.forEach(row => {
+        table += "<tr>";
+        for (let key in row) table += `<td>${row[key]}</td>`;
+        table += "</tr>";
+    });
+    table += "</table>";
+    document.getElementById("tableContainer").innerHTML = table;
+
+    populateColumnSelector();
+}
+
+// Populate dropdown
+function populateColumnSelector() {
+    const selector = document.getElementById("columnSelector");
+    selector.innerHTML = "";
+    Object.keys(dataset[0]).forEach(col => {
+        const option = document.createElement("option");
+        option.value = col;
+        option.text = col;
+        selector.appendChild(option);
+    });
+}
+
+// Fetch stats + histogram from backend
+async function fetchStatsAndHist() {
+    const col = document.getElementById("columnSelector").value;
+    if (!col) return;
+
+    // Fetch stats
+    try {
+        const statsResp = await fetch(`http://localhost:5000/api/dataset/1/column/${encodeURIComponent(col)}/stats`);
+        const stats = await statsResp.json();
+        let statsText = `Missing Count: ${stats.missing_count}\n`;
+        statsText += `Min: ${stats.min}\nMax: ${stats.max}\nMean: ${stats.mean}\nMedian: ${stats.median}\nMode: ${Array.isArray(stats.mode) ? stats.mode.join(', ') : stats.mode}`;
+        document.getElementById("statsResult").innerText = statsText;
+    } catch (error) {
+        document.getElementById("statsResult").innerText = "Error fetching stats";
+        console.error(error);
+    }
+
+    // Fetch histogram
+    try {
+        const histResp = await fetch(`http://localhost:5000/api/dataset/1/column/${encodeURIComponent(col)}/hist`);
+        const hist = await histResp.json();
+        const ctx = document.getElementById("histogram").getContext("2d");
+        if (chartInstance) chartInstance.destroy();
+
+        if (hist.bins && hist.bins.length) {
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: hist.bins.map(b => b.toFixed(2)),
+                    datasets: [{ label: col, data: hist.counts, backgroundColor: 'rgba(75,192,192,0.5)' }]
+                },
+                options: { responsive:false, scales:{ x:{ title:{ display:true, text:'Bins' }}, y:{ title:{ display:true, text:'Count' }}}}
+            });
+        } else {
+            ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
+        }
+    } catch (error) {
+        console.error(error);
+    }
+}
+</script>
+</body>
+</html>
